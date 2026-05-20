@@ -1680,15 +1680,38 @@ def run_pipeline(demo: bool = False, force: bool = False) -> int:
             sheets_ctx = sync_before_run(health, demo=demo)
         tw_univ = read_universe("TW")
         us_univ = read_universe("US")
+        update_market = os.environ.get("V1046_UPDATE_MARKET", "ALL").strip().upper()
+        if update_market not in {"ALL", "TW", "US"}:
+            update_market = "ALL"
+
+        def _load_cached_daily(market: str) -> pd.DataFrame:
+            path = DATA_DIR / ("tw_daily_420.csv" if market == "TW" else "us_daily_420.csv")
+            if path.exists():
+                try:
+                    df = pd.read_csv(path)
+                    health.append(f"OK {market} cached daily rows={len(df)} symbols={df['symbol'].nunique() if 'symbol' in df.columns and not df.empty else 0} -> {path.relative_to(ROOT)}")
+                    return df
+                except Exception as e:
+                    health.append(f"WARN {market} cached daily read failed: {type(e).__name__}: {e}")
+            health.append(f"INFO {market} cached daily missing; skip fetching because V1046_UPDATE_MARKET={update_market}")
+            return pd.DataFrame()
+
         if demo:
             tw_daily = demo_daily(tw_univ, "TW")
             us_daily = demo_daily(us_univ, "US")
             health.append(f"OK DEMO TW daily rows={len(tw_daily)} symbols={tw_daily['symbol'].nunique()}")
             health.append(f"OK DEMO US daily rows={len(us_daily)} symbols={us_daily['symbol'].nunique()}")
         else:
-            tw_daily = fetch_daily_yfinance(tw_univ, "TW", settings, health)
-            us_daily = fetch_daily_yfinance(us_univ, "US", settings, health)
-        daily_all = pd.concat([tw_daily, us_daily], ignore_index=True)
+            if update_market in {"ALL", "TW"}:
+                tw_daily = fetch_daily_yfinance(tw_univ, "TW", settings, health)
+            else:
+                tw_daily = _load_cached_daily("TW")
+            if update_market in {"ALL", "US"}:
+                us_daily = fetch_daily_yfinance(us_univ, "US", settings, health)
+            else:
+                us_daily = _load_cached_daily("US")
+        daily_parts = [x for x in [tw_daily, us_daily] if isinstance(x, pd.DataFrame) and not x.empty]
+        daily_all = pd.concat(daily_parts, ignore_index=True) if daily_parts else pd.DataFrame()
         risk = fetch_risk(settings, demo, health)
         tw_feat = compute_features(tw_daily, TW_RULE)
         us_feat = compute_features(us_daily, US_RULE)

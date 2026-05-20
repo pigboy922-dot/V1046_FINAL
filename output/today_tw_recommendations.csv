@@ -1,2 +1,0 @@
-﻿market,symbol,name_zh,recommended_price,recommendation_date,strategy,action,reason,hold_days_plan,rule_profile
-TW,2330,台積電,495.6935337788623,2026-05-20,台股 FINAL｜全台股掃描｜Top3｜H80｜虧1筆動態冷靜期,紙上買入候選,全台/美股池動能突破；防追高通過；分數 100.0；規則 7；離MA20 6.7%；5日 1.8%；停損 10%；H80；最多持倉3；台灣時間週三收盤後產生；週四開盤買進；風控 NORMAL,80,TW_FINAL_H80_MAX3_DYNAMIC_CD
