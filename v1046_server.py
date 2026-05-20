@@ -20,6 +20,7 @@ import threading
 import traceback
 import time
 from typing import Dict, Iterable, List, Tuple
+from html import escape
 
 from flask import Flask, Response, abort, jsonify, redirect, request, send_from_directory, url_for
 
