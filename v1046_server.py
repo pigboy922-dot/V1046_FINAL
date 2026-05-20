@@ -24,7 +24,6 @@ from html import escape
 
 from flask import Flask, Response, abort, jsonify, redirect, request, send_from_directory, url_for
 
-from v1046_cloud_daily_risk_guard import run_pipeline, load_settings, refresh_auto_universe_files
 
 try:
     from v1046_gs_sync import get_sheets_status, get_drive_status, public_sheet_url, read_worksheet_records, verify_cloud_sync
@@ -76,6 +75,13 @@ def fmt_mtime(path: Path) -> str:
         return datetime.fromtimestamp(path.stat().st_mtime, TAIPEI_TZ).strftime("%Y-%m-%d %H:%M:%S") if path.exists() else ""
     except Exception:
         return ""
+
+
+def _lazy_run_pipeline(demo: bool=False) -> int:
+    # Import strategy code only when a run endpoint is explicitly used.
+    # This keeps Render cloud-board cold starts and /api/status fast.
+    from v1046_cloud_daily_risk_guard import run_pipeline
+    return _lazy_run_pipeline(demo=demo)
 
 
 def public_base_url() -> str:
@@ -171,7 +177,7 @@ def _worker(demo: bool) -> None:
         last_exit_code=None,
     )
     try:
-        code = int(run_pipeline(demo=demo))
+        code = _lazy_run_pipeline(demo=demo)
         _set_job(
             running=False,
             status="success" if code == 0 else "failed",
@@ -243,7 +249,7 @@ def _worker_update_all_then_run() -> None:
         health.append(f"START 512MB-safe cache+REAL run at Taipei {now_ts()}")
         health.append("INFO skip full-market universe rebuild on Render 512MB; use existing config/tw_universe.csv and config/us_universe.csv")
         health.append("INFO Google Drive cache pull/push will be handled by run_pipeline if enabled")
-        code = int(run_pipeline(demo=False))
+        code = _lazy_run_pipeline(demo=False)
         health.append(f"FINISH REAL recommendation at Taipei {now_ts()} exit_code={code}")
         _write_oneclick_universe_report(health, code=code)
         _set_job(
@@ -287,7 +293,7 @@ def _worker_market_cache_then_run(market: str) -> None:
         os.environ["V1046_UPDATE_MARKET"] = market
         health.append(f"START {market}-only cache+REAL run at Taipei {now_ts()}")
         health.append(f"INFO update only {market}; the other market uses Google Drive/local cache if available")
-        code = int(run_pipeline(demo=False))
+        code = _lazy_run_pipeline(demo=False)
         health.append(f"FINISH {market}-only REAL recommendation at Taipei {now_ts()} exit_code={code}")
         _write_oneclick_universe_report(health, code=code)
         _set_job(
