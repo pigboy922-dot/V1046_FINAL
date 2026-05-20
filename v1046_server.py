@@ -214,35 +214,47 @@ def _csv_rows(path: Path) -> int:
 
 
 def _worker_update_all_then_run() -> None:
+    """One click: refresh TW/US universe in small batches, then run official recommendation.
+
+    Google Drive stores cache files, but Render still has only 512MB RAM.
+    This route therefore uses tiny yfinance batches and writes a clear report.
+    If Render still kills the instance, the next step is moving this button to
+    a larger worker or GitHub Action; the recommendation-only button remains safe.
+    """
     _set_job(
         running=True,
-        mode="UNIVERSE+REAL",
+        mode="FULLPOOL+REAL",
         status="running",
-        message="一鍵更新台美股股池中，完成後會接著跑正式推薦",
+        message="分批更新台美股股池，完成後跑正式推薦",
         last_started_at=now_ts(),
         last_finished_at="",
         last_exit_code=None,
     )
     health: List[str] = []
     try:
+        health.append(f"START full-pool small-batch update at Taipei {now_ts()}")
         settings = load_settings()
-        # One-click update always enables universe refresh for this run only.
-        # The normal homepage/run path remains memory-safe and will not auto-refresh pools.
+        # Force the universe updater only for this explicit button.
+        # Keep batches small to avoid Render 512MB OOM.
         settings["auto_universe_enabled"] = True
+        settings["auto_universe_on_run"] = False
         settings["auto_universe_top_tw"] = int(settings.get("auto_universe_top_tw", 500) or 500)
         settings["auto_universe_top_us"] = int(settings.get("auto_universe_top_us", 367) or 367)
         settings["auto_universe_max_download_tw"] = int(settings.get("auto_universe_max_download_tw", 1800) or 1800)
         settings["auto_universe_max_download_us"] = int(settings.get("auto_universe_max_download_us", 900) or 900)
-        health.append(f"START ONECLICK universe refresh at Taipei {now_ts()}")
+        settings["batch_size_tw"] = min(int(settings.get("batch_size_tw", 5) or 5), 3)
+        settings["batch_size_us"] = min(int(settings.get("batch_size_us", 8) or 8), 5)
+        health.append("INFO button purpose: refresh TW/US universe first, then run official recommendation")
+        health.append("INFO small batches: TW<=3, US<=5 to reduce 512MB memory risk")
         refresh_auto_universe_files(settings, health)
-        health.append(f"FINISH universe refresh at Taipei {now_ts()}; next run REAL recommendation")
+        health.append(f"INFO universe refresh done: TW rows={_csv_rows(CONFIG / 'tw_universe.csv')} US rows={_csv_rows(CONFIG / 'us_universe.csv')}")
         code = int(run_pipeline(demo=False))
-        health.append(f"FINISH REAL recommendation at Taipei {now_ts()} exit_code={code}")
+        health.append(f"FINISH official recommendation at Taipei {now_ts()} exit_code={code}")
         _write_oneclick_universe_report(health, code=code)
         _set_job(
             running=False,
             status="success" if code == 0 else "failed",
-            message="一鍵更新股池 + 正式推薦完成" if code == 0 else "一鍵更新後正式推薦失敗，請看健康檢查",
+            message="分批股池更新 + 正式推薦完成" if code == 0 else "股池更新後正式推薦失敗，請看健康檢查",
             last_finished_at=now_ts(),
             last_exit_code=code,
         )
@@ -255,7 +267,7 @@ def _worker_update_all_then_run() -> None:
         _set_job(
             running=False,
             status="failed",
-            message=f"一鍵更新例外錯誤：{type(exc).__name__}: {exc}",
+            message=f"一鍵分批更新例外錯誤：{type(exc).__name__}: {exc}",
             last_finished_at=now_ts(),
             last_exit_code=1,
         )
@@ -289,7 +301,7 @@ def start_update_all_then_run() -> Tuple[bool, Dict[str, object]]:
             running=True,
             mode="UNIVERSE+REAL",
             status="queued",
-            message="已排入：一鍵更新台美股股池 + 正式推薦",
+            message="已排入：分批更新台美股股池 + 正式推薦",
             last_started_at=now_ts(),
             last_finished_at="",
             last_exit_code=None,
@@ -409,7 +421,7 @@ def cloud_bar_html() -> str:
 <div id="v1046-cloudbar" data-status="idle">
   <strong>{APP_NAME}</strong>
   <a class="v1046-primary" href="/?auto=0">正式推薦頁</a>
-  <button class="v1046-primary" type="button" data-v1046-run="update_all">一鍵更新股池+正式推薦</button>
+  <button class="v1046-primary" type="button" data-v1046-run="update_all">一鍵更新行情+正式推薦</button>
   <button type="button" data-v1046-run="real">只跑正式推薦</button>
   <button class="v1046-demo" type="button" data-v1046-run="demo">跑 DEMO</button>
   <a href="{url_for('files_page')}">下載檔案</a>
@@ -463,7 +475,7 @@ def cloud_script() -> str:
   }
   async function run(mode){
     let url = (mode === 'update_all') ? '/api/update_all' : ('/api/run?mode=' + encodeURIComponent(mode));
-    if(mode === 'update_all' && !confirm('這會先更新台美股股池，再跑正式推薦；可能需要數分鐘。要開始嗎？')) return;
+    if(mode === 'update_all' && !confirm('會分批更新台美股股池後跑正式推薦。Render免費機仍可能因512MB限制失敗；已盡量用小批次降低風險。要開始嗎？')) return;
     try{
       const r = await fetch(url, {method:'POST'});
       const s = await r.json();
@@ -513,7 +525,7 @@ def landing_page() -> str:
     ) or "<tr><td colspan='4'>尚無輸出檔</td></tr>"
     return f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{APP_NAME}</title>{cloud_css()}<style>
 body{{margin:0;background:#eef2f6;color:#243447;font-family:'Microsoft JhengHei',Arial,sans-serif}}.wrap{{max-width:1080px;margin:0 auto;padding:18px}}.card{{background:#fffdf7;border:1px solid #dde4dc;border-radius:18px;margin:14px 0;padding:16px;box-shadow:0 8px 24px rgba(15,23,42,.06)}}h1{{margin:0 0 8px}}.sub{{color:#64748b;line-height:1.7}}table{{border-collapse:collapse;width:100%;font-size:13px}}th,td{{border-bottom:1px solid #e2e8d7;padding:8px;text-align:left}}th{{background:#eef1e6}}a{{color:#2563eb;font-weight:800}}
-</style></head><body>{cloud_bar_html()}<div class="wrap"><div class="card"><h1>{APP_NAME}</h1><div class="sub">這是雲端 Web 啟動頁。為避免 Render 512MB 記憶體爆掉，開頁預設不自動重跑；禮拜五早上可按「一鍵更新股池+正式推薦」：它會先更新台美股股池，再跑正式推薦。平常只想重跑推薦，就按「只跑正式推薦」。按「跑 DEMO」只產生測試 dashboard，不寫入正式持倉。</div></div><div class="card"><h2>目前檔案</h2><table><thead><tr><th>資料夾</th><th>檔案</th><th>大小</th><th>更新時間</th></tr></thead><tbody>{rows}</tbody></table></div></div>{cloud_script()}</body></html>"""
+</style></head><body>{cloud_bar_html()}<div class="wrap"><div class="card"><h1>{APP_NAME}</h1><div class="sub">這是雲端 Web 啟動頁。開頁預設不自動重跑；禮拜五早上按「一鍵更新全股池+正式推薦」，系統會用小批次更新台美股股池後跑正式推薦。平常只重算訊號就按「只跑正式推薦」。頁面已移除 DEMO、下載、Google Sheets 等平常用不到的按鈕。</div></div><div class="card"><h2>目前檔案</h2><table><thead><tr><th>資料夾</th><th>檔案</th><th>大小</th><th>更新時間</th></tr></thead><tbody>{rows}</tbody></table></div></div>{cloud_script()}</body></html>"""
 
 
 @app.route("/")
