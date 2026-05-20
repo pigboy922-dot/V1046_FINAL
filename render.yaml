@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: v1046-final
+    env: python
+    plan: free
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: gunicorn v1046_server:app --workers 1 --threads 4 --timeout 300 --bind 0.0.0.0:$PORT
+    autoDeploy: false
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: TZ
+        value: "Asia/Taipei"
+      - key: PUBLIC_BASE_URL
+        value: "https://v1046-final.onrender.com"
+      - key: V1046_AUTO_RUN_ON_OPEN
+        value: "false"
+      - key: V1046_CLOUD_READONLY
+        value: "true"
+      - key: V1046_GSHEETS_ENABLED
+        value: "1"
+      - key: V1046_GSHEETS_STATE_ENABLED
+        value: "1"
+      - key: V1046_GSHEETS_OUTPUT_ENABLED
+        value: "1"
+      - key: V1046_GSHEETS_ID
+        value: "18YA4MvYJ0bclofBsViJ_zSnPcbmVQ4gmy0DC12Q1-3I"
+      - key: V1046_GDRIVE_ENABLED
+        value: "1"
+      - key: V1046_GDRIVE_FOLDER_ID
+        value: "1eW9iKeK9bwRgf0N22ChXOoI8M82GlAI7"
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON_B64
+        sync: false
