@@ -1,0 +1,41 @@
+{
+  "generated_at": "2026-05-20 06:36:55",
+  "app_version": "V104.6 FINAL Fusion｜TW H80 Dynamic Cooldown + US H70 Fusion｜Capital TW20/US80",
+  "error": "",
+  "standard_mode_only": true,
+  "rules": {
+    "TW": {
+      "profile": "TW_FINAL_H80_MAX3_DYNAMIC_CD",
+      "hold_days": 80,
+      "max_positions": 3,
+      "stop_loss_pct": 0.1,
+      "cooldown": "loss1 max21 days, release when TWII/TWOII above MA60"
+    },
+    "US": {
+      "profile": "US_FINAL_H70_FUSION_QQQ100",
+      "hold_days": 70,
+      "max_positions": 2,
+      "stop_loss_pct": 0.1,
+      "filter": "ret20<=42.5%, QQQ>MA100"
+    }
+  },
+  "capital": {
+    "TW": 0.2,
+    "US": 0.8,
+    "total_capital_default": 100000
+  },
+  "health_log": [
+    "INFO Google Sheets sync disabled",
+    "OK DEMO TW daily rows=5200 symbols=20",
+    "OK DEMO US daily rows=5200 symbols=20",
+    "OK TW latest features date=2026-05-20 00:00:00 rows=20",
+    "OK US latest features date=2026-05-20 00:00:00 rows=20",
+    "V104.6 GUARD TW: OK / TW_LOSS1_DYNAMIC_CD21_RELEASE_TWII_TWOT_MA60 / OK / ",
+    "V104.6 GUARD US: OK / US_QQQ_MA100_FILTER_ONLY / OK / ",
+    "FINAL_RULE TW_FINAL_H80_MAX3_DYNAMIC_CD passed=1 / total=20",
+    "FILTER TW: final_rule_pass=1, room=3, open_positions=0, weekly=台灣時間週三收盤後產生；週四開盤買進",
+    "OK_REC TW: official recommendations=1",
+    "NO_REC US: 非固定週選資料日；latest=2026-05-20 週三，規則需要 週四 收盤資料。美國週四收盤後產生；台灣時間週五晚上買進",
+    "INFO DEMO mode: recommendations not written into official paper positions"
+  ]
+}

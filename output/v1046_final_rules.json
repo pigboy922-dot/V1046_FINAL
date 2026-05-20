@@ -1,0 +1,18 @@
+{
+  "tw_rule": {
+    "market": "TW",
+    "H": 80,
+    "maxpos": 3,
+    "stop_loss_pct": -10,
+    "cooldown": "loss>=1 -> max 21d; early release if TAIEX or OTC index > 60MA",
+    "filters": "rule_count>=7, ret60>=40%, ret20>=10%, ret20 cap about 40-45%, ret5<=10%, liquidity/ATR/RSI filters"
+  },
+  "us_rule": {
+    "market": "US",
+    "H": 70,
+    "maxpos": 2,
+    "stop_loss_pct": -10,
+    "cooldown": "none",
+    "filters": "QQQ > 100MA, ret20 <= 42.5%, growth score / rule_count ranking"
+  }
+}

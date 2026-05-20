@@ -1,0 +1,56 @@
+﻿symbol,name_zh,yfinance_symbol
+NVDA,輝達,NVDA
+AMD,超微,AMD
+AVGO,博通,AVGO
+QCOM,高通,QCOM
+AMAT,應用材料,AMAT
+ASML,艾司摩爾,ASML
+TSM,台積電ADR,TSM
+MU,美光,MU
+LRCX,科林研發,LRCX
+KLAC,科磊,KLAC
+AAPL,蘋果,AAPL
+MSFT,微軟,MSFT
+GOOGL,Alphabet,GOOGL
+META,Meta,META
+AMZN,亞馬遜,AMZN
+TSLA,特斯拉,TSLA
+NFLX,Netflix,NFLX
+CRM,Salesforce,CRM
+NOW,ServiceNow,NOW
+ADBE,Adobe,ADBE
+SNOW,Snowflake,SNOW
+PANW,Palo Alto,PANW
+CRWD,CrowdStrike,CRWD
+NET,Cloudflare,NET
+DDOG,Datadog,DDOG
+APP,AppLovin,APP
+PLTR,Palantir,PLTR
+ARM,Arm,ARM
+SMCI,超微電腦,SMCI
+DELL,戴爾,DELL
+VRT,Vertiv,VRT
+ANET,Arista,ANET
+ORCL,甲骨文,ORCL
+INTC,英特爾,INTC
+MRVL,Marvell,MRVL
+MELI,MercadoLibre,MELI
+SHOP,Shopify,SHOP
+UBER,Uber,UBER
+ABNB,Airbnb,ABNB
+COIN,Coinbase,COIN
+HOOD,Robinhood,HOOD
+XYZ,Block,XYZ
+PYPL,PayPal,PYPL
+COST,Costco,COST
+CAT,Caterpillar,CAT
+GE,GE Aerospace,GE
+CEG,Constellation Energy,CEG
+VST,Vistra,VST
+LLY,禮來,LLY
+NVO,諾和諾德,NVO
+VRTX,Vertex,VRTX
+REGN,Regeneron,REGN
+ISRG,Intuitive Surgical,ISRG
+BKNG,Booking,BKNG
+AXON,Axon,AXON

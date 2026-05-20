@@ -1,0 +1,7 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>V1046 FINAL Deploy Notes</title><style>body{font-family:Microsoft JhengHei,Arial;background:#eef2f6;color:#243447}.card{max-width:980px;margin:18px auto;background:#fffdf7;border:1px solid #dde4dc;border-radius:18px;padding:18px;line-height:1.7}code{background:#f1f5f9;padding:2px 6px;border-radius:6px}</style></head><body><div class="card"><h1>V104.6 FINAL 台美股融合部署版</h1><h2>規則</h2><p><b>台股：</b>H80，最多3檔，-10%停損，虧1筆後最多冷靜21天；加權或櫃買站回60MA提前解除。</p><p><b>美股：</b>H70，最多2檔，ret20≤42.5%，QQQ&gt;100MA，-10%停損，不加固定冷靜期。</p><p><b>資金目標：</b>台股20%，美股80%。</p><h2>部署注意</h2><p>Render 根目錄必須直接看到 <code>v1046_server.py</code>、<code>v1046_cloud_daily_risk_guard.py</code>、<code>Procfile</code>，不要再包一層資料夾。</p></div></body></html><hr><h2>V104.6.1 標準模式新增功能</h2><ul>
+<li>新增 /health_full 與 /api/health_full 完整健康檢查。</li>
+<li>Google Sheets 拉回/回寫前會備份，避免 state 被誤清空或覆蓋。</li>
+<li>新增今日動作摘要：買進、待賣、持倉、冷靜期狀態一眼看。</li>
+<li>推薦表新增建議投入金額、預估股數、停損價、最大虧損額。</li>
+<li>標準模式固定：TW H80 動態 cooldown + US H70 fusion + TW20/US80。</li>
+</ul>
