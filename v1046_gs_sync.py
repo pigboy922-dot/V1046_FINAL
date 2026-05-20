@@ -8,14 +8,15 @@ Purpose
   state/output back to Sheets.
 
 Environment variables
-- V1046_SHEETS_ENABLED=true
-- V1046_GOOGLE_SHEET_ID=<spreadsheet id>
-- V1046_GOOGLE_SERVICE_ACCOUNT_JSON=<service account json, raw or base64>
-  or V1046_GOOGLE_SERVICE_ACCOUNT_FILE=<path to json file>
-- V1046_SHEETS_STATE_ENABLED=true
-- V1046_SHEETS_OUTPUT_ENABLED=true
-- V1046_SHEETS_LOCK_ENABLED=true
-- V1046_SHEETS_LOCK_TTL_SECONDS=900
+- V1046_GSHEETS_ENABLED=1 (also accepts V1046_SHEETS_ENABLED)
+- V1046_GSHEETS_ID=<spreadsheet id> (also accepts V1046_GOOGLE_SHEET_ID)
+- GOOGLE_SERVICE_ACCOUNT_JSON_B64=<base64 service account json>
+  also accepts V1046_GOOGLE_SERVICE_ACCOUNT_JSON_B64 / GOOGLE_SERVICE_ACCOUNT_JSON / V1046_GOOGLE_SERVICE_ACCOUNT_JSON
+- V1046_GSHEETS_STATE_ENABLED=1
+- V1046_GSHEETS_OUTPUT_ENABLED=1
+- V1046_GSHEETS_LOCK_ENABLED=1
+- V1046_GDRIVE_ENABLED=1
+- V1046_GDRIVE_FOLDER_ID=<Google Drive folder id>
 """
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ import json
 import os
 import time
 import uuid
+import mimetypes
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -34,10 +36,12 @@ from typing import Dict, Iterable, List, Optional, Tuple
 ROOT = Path(__file__).resolve().parent
 STATE_DIR = ROOT / "state"
 OUTPUT_DIR = ROOT / "output"
+DATA_DIR = ROOT / "data"
+CONFIG_DIR = ROOT / "config"
 LOG_DIR = ROOT / "logs"
 BACKUP_DIR = STATE_DIR / "backups"
 TAIPEI_TZ = ZoneInfo("Asia/Taipei")
-for p in [STATE_DIR, OUTPUT_DIR, LOG_DIR, BACKUP_DIR]:
+for p in [STATE_DIR, OUTPUT_DIR, DATA_DIR, CONFIG_DIR, LOG_DIR, BACKUP_DIR]:
     p.mkdir(parents=True, exist_ok=True)
 
 STATE_FILES: Dict[str, Path] = {
@@ -60,6 +64,16 @@ OUTPUT_FILES: Dict[str, Path] = {
     "output_risk_latest_prices": OUTPUT_DIR / "v1046_risk_latest_prices.csv",
     "output_tw_nearest_failed": OUTPUT_DIR / "v1046_tw_nearest_failed_candidates.csv",
     "output_us_nearest_failed": OUTPUT_DIR / "v1046_us_nearest_failed_candidates.csv",
+}
+
+# Large cache files belong in Google Drive, not in the deploy zip.
+GDRIVE_CACHE_FILES: Dict[str, Path] = {
+    "tw_daily_420.csv": DATA_DIR / "tw_daily_420.csv",
+    "us_daily_420.csv": DATA_DIR / "us_daily_420.csv",
+    "tw_features_latest.csv": OUTPUT_DIR / "v1046_tw_latest_features.csv",
+    "us_features_latest.csv": OUTPUT_DIR / "v1046_us_latest_features.csv",
+    "tw_universe.csv": CONFIG_DIR / "tw_universe.csv",
+    "us_universe.csv": CONFIG_DIR / "us_universe.csv",
 }
 
 RUN_LOCK_SHEET = "_run_lock"
@@ -90,13 +104,34 @@ def env_int(name: str, default: int) -> int:
         return default
 
 
+def _first_env(*names: str) -> str:
+    for name in names:
+        val = os.environ.get(name)
+        if val is not None and str(val).strip() != "":
+            return str(val).strip()
+    return ""
+
+
+def _cred_raw() -> str:
+    return _first_env(
+        "GOOGLE_SERVICE_ACCOUNT_JSON_B64",
+        "V1046_GOOGLE_SERVICE_ACCOUNT_JSON_B64",
+        "V1046_GOOGLE_SERVICE_ACCOUNT_JSON",
+        "GOOGLE_SERVICE_ACCOUNT_JSON",
+    )
+
+
+def _cred_path() -> str:
+    return _first_env("V1046_GOOGLE_SERVICE_ACCOUNT_FILE", "GOOGLE_SERVICE_ACCOUNT_FILE")
+
+
 def sheet_id() -> str:
-    return (os.environ.get("V1046_GOOGLE_SHEET_ID") or os.environ.get("GOOGLE_SHEET_ID") or "").strip()
+    return _first_env("V1046_GSHEETS_ID", "V1046_GOOGLE_SHEET_ID", "GOOGLE_SHEET_ID")
 
 
 def service_account_email() -> str:
-    raw = os.environ.get("V1046_GOOGLE_SERVICE_ACCOUNT_JSON") or os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON") or ""
-    path = os.environ.get("V1046_GOOGLE_SERVICE_ACCOUNT_FILE") or os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE") or ""
+    raw = _cred_raw()
+    path = _cred_path()
     try:
         info = _parse_service_account_json(raw) if raw else None
         if info:
@@ -110,29 +145,23 @@ def service_account_email() -> str:
 
 
 def configured() -> bool:
-    return bool(sheet_id()) and bool(
-        os.environ.get("V1046_GOOGLE_SERVICE_ACCOUNT_JSON")
-        or os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-        or os.environ.get("V1046_GOOGLE_SERVICE_ACCOUNT_FILE")
-        or os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
-    )
+    return bool(sheet_id()) and bool(_cred_raw() or _cred_path())
 
 
 def sheets_enabled() -> bool:
-    # Explicit true is preferred. Auto-enable when sheet id + credentials exist to reduce setup mistakes.
-    return env_bool("V1046_SHEETS_ENABLED", False) or configured()
+    return env_bool("V1046_GSHEETS_ENABLED", env_bool("V1046_SHEETS_ENABLED", False)) and configured()
 
 
 def state_enabled() -> bool:
-    return env_bool("V1046_SHEETS_STATE_ENABLED", True)
+    return env_bool("V1046_GSHEETS_STATE_ENABLED", env_bool("V1046_SHEETS_STATE_ENABLED", True))
 
 
 def output_enabled() -> bool:
-    return env_bool("V1046_SHEETS_OUTPUT_ENABLED", True)
+    return env_bool("V1046_GSHEETS_OUTPUT_ENABLED", env_bool("V1046_SHEETS_OUTPUT_ENABLED", True))
 
 
 def lock_enabled() -> bool:
-    return env_bool("V1046_SHEETS_LOCK_ENABLED", True)
+    return env_bool("V1046_GSHEETS_LOCK_ENABLED", env_bool("V1046_SHEETS_LOCK_ENABLED", True))
 
 
 def masked_sheet_id() -> str:
@@ -150,6 +179,7 @@ def public_sheet_url() -> str:
 
 
 def get_sheets_status(light: bool = True) -> Dict[str, object]:
+    raw = _cred_raw()
     status = {
         "enabled": sheets_enabled(),
         "configured": configured(),
@@ -159,13 +189,55 @@ def get_sheets_status(light: bool = True) -> Dict[str, object]:
         "state_enabled": state_enabled(),
         "output_enabled": output_enabled(),
         "lock_enabled": lock_enabled(),
+        "env": {
+            "sheet_id_found": bool(sheet_id()),
+            "cred_b64_found": bool(_first_env("GOOGLE_SERVICE_ACCOUNT_JSON_B64", "V1046_GOOGLE_SERVICE_ACCOUNT_JSON_B64")),
+            "cred_raw_found": bool(_first_env("GOOGLE_SERVICE_ACCOUNT_JSON", "V1046_GOOGLE_SERVICE_ACCOUNT_JSON")),
+            "cred_file_found": bool(_cred_path()),
+        },
     }
+    if raw:
+        try:
+            _parse_service_account_json(raw)
+            status["json_decode_ok"] = True
+        except Exception as exc:
+            status["json_decode_ok"] = False
+            status["json_decode_error"] = f"{type(exc).__name__}: {exc}"
     if not light and sheets_enabled():
         try:
             ss = _spreadsheet()
             status["connect_ok"] = True
             status["title"] = getattr(ss, "title", "")
             status["worksheets"] = [w.title for w in ss.worksheets()]
+        except Exception as exc:
+            status["connect_ok"] = False
+            status["error"] = f"{type(exc).__name__}: {exc}"
+    return status
+
+
+def drive_folder_id() -> str:
+    return _first_env("V1046_GDRIVE_FOLDER_ID", "GOOGLE_DRIVE_FOLDER_ID", "GDRIVE_FOLDER_ID")
+
+
+def gdrive_enabled() -> bool:
+    return env_bool("V1046_GDRIVE_ENABLED", False) and bool(drive_folder_id()) and bool(_cred_raw() or _cred_path())
+
+
+def get_drive_status(light: bool = True) -> Dict[str, object]:
+    status = {
+        "enabled": gdrive_enabled(),
+        "configured": bool(drive_folder_id()) and bool(_cred_raw() or _cred_path()),
+        "folder_id_masked": (drive_folder_id()[:6] + "..." + drive_folder_id()[-4:]) if len(drive_folder_id()) > 10 else drive_folder_id(),
+        "folder_url": f"https://drive.google.com/drive/folders/{drive_folder_id()}" if drive_folder_id() else "",
+        "service_account_email": service_account_email(),
+        "cache_files": {name: str(path.relative_to(ROOT)) for name, path in GDRIVE_CACHE_FILES.items()},
+    }
+    if not light and gdrive_enabled():
+        try:
+            sess = _drive_session()
+            meta = sess.get(f"https://www.googleapis.com/drive/v3/files/{drive_folder_id()}", params={"fields": "id,name,mimeType"}, timeout=30)
+            status["connect_ok"] = meta.ok
+            status["folder_meta"] = meta.json() if meta.ok else meta.text[:500]
         except Exception as exc:
             status["connect_ok"] = False
             status["error"] = f"{type(exc).__name__}: {exc}"
@@ -196,10 +268,10 @@ def _client():
 
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive.file",
+        "https://www.googleapis.com/auth/drive",
     ]
-    raw = os.environ.get("V1046_GOOGLE_SERVICE_ACCOUNT_JSON") or os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON") or ""
-    path = os.environ.get("V1046_GOOGLE_SERVICE_ACCOUNT_FILE") or os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE") or ""
+    raw = _cred_raw()
+    path = _cred_path()
     if raw:
         info = _parse_service_account_json(raw)
         creds = Credentials.from_service_account_info(info, scopes=scopes)
@@ -466,7 +538,115 @@ def append_run_log(ss, run_id: str, demo: bool, status: str, error: str = "") ->
     _upload_rows(ws, rows)
 
 
+def _drive_session():
+    try:
+        from google.oauth2.service_account import Credentials
+        from google.auth.transport.requests import AuthorizedSession
+    except Exception as exc:
+        raise RuntimeError("缺少 google-auth，請確認 requirements.txt 已部署") from exc
+    scopes = ["https://www.googleapis.com/auth/drive"]
+    raw = _cred_raw()
+    path = _cred_path()
+    if raw:
+        info = _parse_service_account_json(raw)
+        creds = Credentials.from_service_account_info(info, scopes=scopes)
+    elif path:
+        creds = Credentials.from_service_account_file(path, scopes=scopes)
+    else:
+        raise RuntimeError("沒有 Google Drive service account credentials")
+    return AuthorizedSession(creds)
+
+
+def _drive_find_file(sess, name: str) -> Optional[Dict[str, object]]:
+    folder = drive_folder_id()
+    q = f"'{folder}' in parents and name = '{name}' and trashed = false"
+    r = sess.get("https://www.googleapis.com/drive/v3/files", params={"q": q, "fields": "files(id,name,size,modifiedTime)", "pageSize": 10}, timeout=60)
+    if not r.ok:
+        raise RuntimeError(f"Drive list failed {r.status_code}: {r.text[:500]}")
+    files = r.json().get("files", [])
+    return files[0] if files else None
+
+
+def _drive_download_file(sess, name: str, target: Path, health: List[str]) -> str:
+    found = _drive_find_file(sess, name)
+    if not found:
+        health.append(f"INFO Google Drive cache missing: {name}")
+        return "missing"
+    file_id = found.get("id")
+    r = sess.get(f"https://www.googleapis.com/drive/v3/files/{file_id}", params={"alt": "media"}, timeout=180)
+    if not r.ok:
+        raise RuntimeError(f"Drive download failed {name} {r.status_code}: {r.text[:500]}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        _backup_local_csv(target, f"before_drive_pull_{name}", health)
+    target.write_bytes(r.content)
+    health.append(f"OK Google Drive → local: {name} -> {target.relative_to(ROOT)} bytes={len(r.content):,}")
+    return "downloaded"
+
+
+def _multipart_body(metadata: Dict[str, object], content: bytes, mime: str, boundary: str) -> Tuple[bytes, str]:
+    head = (
+        f"--{boundary}\r\n"
+        "Content-Type: application/json; charset=UTF-8\r\n\r\n"
+        + json.dumps(metadata, ensure_ascii=False)
+        + f"\r\n--{boundary}\r\n"
+        + f"Content-Type: {mime}\r\n\r\n"
+    ).encode("utf-8")
+    tail = f"\r\n--{boundary}--\r\n".encode("utf-8")
+    return head + content + tail, f"multipart/related; boundary={boundary}"
+
+
+def _drive_upload_file(sess, name: str, source: Path, health: List[str]) -> str:
+    if not source.exists():
+        health.append(f"INFO skip Drive upload missing: {source.relative_to(ROOT)}")
+        return "missing"
+    content = source.read_bytes()
+    mime = mimetypes.guess_type(str(source))[0] or "application/octet-stream"
+    found = _drive_find_file(sess, name)
+    metadata = {"name": name}
+    if not found:
+        metadata["parents"] = [drive_folder_id()]
+    boundary = "v1046boundary" + uuid.uuid4().hex
+    body, content_type = _multipart_body(metadata, content, mime, boundary)
+    headers = {"Content-Type": content_type}
+    if found:
+        url = f"https://www.googleapis.com/upload/drive/v3/files/{found.get('id')}?uploadType=multipart"
+        r = sess.patch(url, data=body, headers=headers, timeout=180)
+    else:
+        url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart"
+        r = sess.post(url, data=body, headers=headers, timeout=180)
+    if not r.ok:
+        raise RuntimeError(f"Drive upload failed {name} {r.status_code}: {r.text[:500]}")
+    health.append(f"OK local → Google Drive: {source.relative_to(ROOT)} -> {name} bytes={len(content):,}")
+    return "uploaded"
+
+
+def sync_drive_cache_from_drive(health: List[str]) -> None:
+    if not gdrive_enabled():
+        health.append("INFO Google Drive cache sync disabled")
+        return
+    sess = _drive_session()
+    for name, path in GDRIVE_CACHE_FILES.items():
+        try:
+            _drive_download_file(sess, name, path, health)
+        except Exception as exc:
+            health.append(f"WARN Google Drive pull failed: {name} {type(exc).__name__}: {exc}")
+
+
+def sync_drive_cache_to_drive(health: List[str]) -> None:
+    if not gdrive_enabled():
+        return
+    sess = _drive_session()
+    for name, path in GDRIVE_CACHE_FILES.items():
+        try:
+            _drive_upload_file(sess, name, path, health)
+        except Exception as exc:
+            health.append(f"WARN Google Drive push failed: {name} {type(exc).__name__}: {exc}")
+
+
 def sync_before_run(health: List[str], demo: bool = False) -> Optional[Dict[str, object]]:
+    # Drive cache can be used even when Sheets is disabled.
+    sync_drive_cache_from_drive(health)
     if not sheets_enabled():
         health.append("INFO Google Sheets sync disabled")
         return None
@@ -481,6 +661,11 @@ def sync_before_run(health: List[str], demo: bool = False) -> Optional[Dict[str,
 
 
 def sync_after_run(ctx: Optional[Dict[str, object]], health: List[str], demo: bool, status: str = "success", error: str = "") -> None:
+    # Always try Drive cache upload after a run if enabled.
+    try:
+        sync_drive_cache_to_drive(health)
+    except Exception as exc:
+        health.append(f"WARN Google Drive after-run sync failed: {type(exc).__name__}: {exc}")
     if not sheets_enabled():
         return
     run_id = (ctx or {}).get("run_id") or f"{'DEMO' if demo else 'REAL'}-{datetime.now(TAIPEI_TZ).strftime('%Y%m%d-%H%M%S')}-noctx"

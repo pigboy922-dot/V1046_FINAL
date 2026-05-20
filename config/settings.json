@@ -6,8 +6,8 @@
   "pause_after_consecutive_losses": 999,
   "monthly_reduce_drawdown_pct": -99.0,
   "monthly_stop_drawdown_pct": -99.0,
-  "batch_size_tw": 20,
-  "batch_size_us": 30,
+  "batch_size_tw": 10,
+  "batch_size_us": 15,
   "cost_bps_per_side_monitor": 10,
   "risk_guard_version": "V104.6_FINAL_FUSION_TW20_US80",
   "tw_month_stop_loss_pct": -99.0,
@@ -27,11 +27,11 @@
   "auto_universe_min_price_tw": 10.0,
   "auto_universe_min_price_us": 5.0,
   "auto_universe_top_tw": 500,
-  "auto_universe_top_us": 450,
+  "auto_universe_top_us": 367,
   "auto_universe_max_download_tw": 1800,
   "auto_universe_max_download_us": 900,
   "auto_universe_us_mode": "index_plus_seed",
-  "auto_universe_note": "Render 512MB memory-safe: auto universe download disabled in web deployment to avoid OOM. Use existing CSV universe; full-market refresh should be run offline or on larger instance.",
+  "auto_universe_note": "Render 512MB safe mode: full-market refresh is disabled. Static expanded pool restored: TW500 / US367. Manual update downloads only these pools in small batches.",
   "capital_weight_tw": 0.2,
   "capital_weight_us": 0.8,
   "tw_dynamic_cooldown_enabled": true,
@@ -46,7 +46,7 @@
   "us_loss_streak_cooldown_days": 0,
   "total_capital": 100000,
   "currency_note": "手動下單資金基準；可用環境變數 V1046_TOTAL_CAPITAL 覆蓋",
-  "mode": "STANDARD_ONLY_MEMORY_SAFE",
+  "mode": "STANDARD_ONLY_EXPANDED_STATIC_POOL_512MB_SAFE",
   "standard_profile": "TW H80 dynamic cooldown + US H70 fusion + capital TW20/US80",
   "features_added": [
     "health_full",
@@ -55,5 +55,7 @@
     "position_sizing_stop_price"
   ],
   "render_memory_safe": true,
-  "timezone": "Asia/Taipei"
+  "timezone": "Asia/Taipei",
+  "static_pool_tw_symbols": 500,
+  "static_pool_us_symbols": 367
 }

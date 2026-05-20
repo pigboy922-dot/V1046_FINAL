@@ -23,12 +23,13 @@ from typing import Dict, Iterable, List, Tuple
 
 from flask import Flask, Response, abort, jsonify, redirect, request, send_from_directory, url_for
 
-from v1046_cloud_daily_risk_guard import run_pipeline
+from v1046_cloud_daily_risk_guard import run_pipeline, load_settings, refresh_auto_universe_files
 
 try:
-    from v1046_gs_sync import get_sheets_status, public_sheet_url
+    from v1046_gs_sync import get_sheets_status, get_drive_status, public_sheet_url
 except Exception:  # pragma: no cover
     get_sheets_status = None
+    get_drive_status = None
     public_sheet_url = None
 
 ROOT = Path(__file__).resolve().parent
@@ -143,6 +144,11 @@ def _job_snapshot() -> Dict[str, object]:
             data["google_sheets"] = get_sheets_status(light=True)
         except Exception as exc:
             data["google_sheets"] = {"enabled": False, "error": f"{type(exc).__name__}: {exc}"}
+    if get_drive_status is not None:
+        try:
+            data["google_drive"] = get_drive_status(light=True)
+        except Exception as exc:
+            data["google_drive"] = {"enabled": False, "error": f"{type(exc).__name__}: {exc}"}
     return data
 
 
@@ -179,6 +185,81 @@ def _worker(demo: bool) -> None:
         )
 
 
+
+
+def _write_oneclick_universe_report(health: List[str], code: int | None = None) -> None:
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "generated_at_taipei": now_ts(),
+        "server_utc": utc_ts(),
+        "exit_code": code,
+        "tw_universe_rows": _csv_rows(CONFIG / "tw_universe.csv"),
+        "us_universe_rows": _csv_rows(CONFIG / "us_universe.csv"),
+        "health": health,
+    }
+    (OUTPUT / "v1046_oneclick_universe_update.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    rows = "".join(f"<tr><td>{i+1}</td><td>{line}</td></tr>" for i, line in enumerate(health[-300:])) or "<tr><td colspan='2'>尚無紀錄</td></tr>"
+    html = f"""<!doctype html><html lang='zh-Hant'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>一鍵更新股池報告</title><style>body{{font-family:'Microsoft JhengHei',Arial,sans-serif;background:#eef2f6;color:#243447}}.wrap{{max-width:1100px;margin:18px auto;background:#fffdf7;border:1px solid #dde4dc;border-radius:18px;padding:16px}}table{{border-collapse:collapse;width:100%;font-size:13px}}td,th{{border-bottom:1px solid #e2e8d7;padding:7px;text-align:left}}th{{background:#eef1e6}}</style></head><body><div class='wrap'><h1>一鍵更新台美股股池報告</h1><p>台灣時間：{payload['generated_at_taipei']}｜exit_code={code}</p><p>TW universe rows: <b>{payload['tw_universe_rows']}</b>｜US universe rows: <b>{payload['us_universe_rows']}</b></p><p><a href='/?auto=0'>回正式推薦頁</a>｜<a href='/api/status'>API 狀態</a></p><table><thead><tr><th>#</th><th>紀錄</th></tr></thead><tbody>{rows}</tbody></table></div></body></html>"""
+    (OUTPUT / "v1046_oneclick_universe_update_report.html").write_text(html, encoding="utf-8")
+
+
+def _csv_rows(path: Path) -> int:
+    try:
+        if not path.exists():
+            return 0
+        import pandas as pd
+        return int(len(pd.read_csv(path)))
+    except Exception:
+        return -1
+
+
+def _worker_update_all_then_run() -> None:
+    _set_job(
+        running=True,
+        mode="UNIVERSE+REAL",
+        status="running",
+        message="一鍵更新台美股股池中，完成後會接著跑正式推薦",
+        last_started_at=now_ts(),
+        last_finished_at="",
+        last_exit_code=None,
+    )
+    health: List[str] = []
+    try:
+        settings = load_settings()
+        # One-click update always enables universe refresh for this run only.
+        # The normal homepage/run path remains memory-safe and will not auto-refresh pools.
+        settings["auto_universe_enabled"] = True
+        settings["auto_universe_top_tw"] = int(settings.get("auto_universe_top_tw", 500) or 500)
+        settings["auto_universe_top_us"] = int(settings.get("auto_universe_top_us", 367) or 367)
+        settings["auto_universe_max_download_tw"] = int(settings.get("auto_universe_max_download_tw", 1800) or 1800)
+        settings["auto_universe_max_download_us"] = int(settings.get("auto_universe_max_download_us", 900) or 900)
+        health.append(f"START ONECLICK universe refresh at Taipei {now_ts()}")
+        refresh_auto_universe_files(settings, health)
+        health.append(f"FINISH universe refresh at Taipei {now_ts()}; next run REAL recommendation")
+        code = int(run_pipeline(demo=False))
+        health.append(f"FINISH REAL recommendation at Taipei {now_ts()} exit_code={code}")
+        _write_oneclick_universe_report(health, code=code)
+        _set_job(
+            running=False,
+            status="success" if code == 0 else "failed",
+            message="一鍵更新股池 + 正式推薦完成" if code == 0 else "一鍵更新後正式推薦失敗，請看健康檢查",
+            last_finished_at=now_ts(),
+            last_exit_code=code,
+        )
+    except Exception as exc:
+        err = traceback.format_exc()
+        LOGS.mkdir(parents=True, exist_ok=True)
+        (LOGS / "v1046_oneclick_update_error.log").write_text(err, encoding="utf-8")
+        health.append(f"ERROR {type(exc).__name__}: {exc}")
+        _write_oneclick_universe_report(health, code=1)
+        _set_job(
+            running=False,
+            status="failed",
+            message=f"一鍵更新例外錯誤：{type(exc).__name__}: {exc}",
+            last_finished_at=now_ts(),
+            last_exit_code=1,
+        )
+
 def start_run(demo: bool) -> Tuple[bool, Dict[str, object]]:
     with _job_lock:
         if _job.get("running"):
@@ -197,6 +278,25 @@ def start_run(demo: bool) -> Tuple[bool, Dict[str, object]]:
     t.start()
     return True, _job_snapshot()
 
+
+
+
+def start_update_all_then_run() -> Tuple[bool, Dict[str, object]]:
+    with _job_lock:
+        if _job.get("running"):
+            return False, dict(_job)
+        _job.update(
+            running=True,
+            mode="UNIVERSE+REAL",
+            status="queued",
+            message="已排入：一鍵更新台美股股池 + 正式推薦",
+            last_started_at=now_ts(),
+            last_finished_at="",
+            last_exit_code=None,
+        )
+    t = threading.Thread(target=_worker_update_all_then_run, daemon=True)
+    t.start()
+    return True, _job_snapshot()
 
 def maybe_auto_run_on_open() -> None:
     """Start one guarded run when the home page is opened.
@@ -309,7 +409,8 @@ def cloud_bar_html() -> str:
 <div id="v1046-cloudbar" data-status="idle">
   <strong>{APP_NAME}</strong>
   <a class="v1046-primary" href="/?auto=0">正式推薦頁</a>
-  <button class="v1046-primary" type="button" data-v1046-run="real">手動更新正式</button>
+  <button class="v1046-primary" type="button" data-v1046-run="update_all">一鍵更新股池+正式推薦</button>
+  <button type="button" data-v1046-run="real">只跑正式推薦</button>
   <button class="v1046-demo" type="button" data-v1046-run="demo">跑 DEMO</button>
   <a href="{url_for('files_page')}">下載檔案</a>
   <a href="{url_for('sheets_page')}">Google Sheets</a>
@@ -361,7 +462,8 @@ def cloud_script() -> str:
     }catch(e){ text.textContent = '狀態讀取失敗：' + e; }
   }
   async function run(mode){
-    let url = '/api/run?mode=' + encodeURIComponent(mode);
+    let url = (mode === 'update_all') ? '/api/update_all' : ('/api/run?mode=' + encodeURIComponent(mode));
+    if(mode === 'update_all' && !confirm('這會先更新台美股股池，再跑正式推薦；可能需要數分鐘。要開始嗎？')) return;
     try{
       const r = await fetch(url, {method:'POST'});
       const s = await r.json();
@@ -411,7 +513,7 @@ def landing_page() -> str:
     ) or "<tr><td colspan='4'>尚無輸出檔</td></tr>"
     return f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{APP_NAME}</title>{cloud_css()}<style>
 body{{margin:0;background:#eef2f6;color:#243447;font-family:'Microsoft JhengHei',Arial,sans-serif}}.wrap{{max-width:1080px;margin:0 auto;padding:18px}}.card{{background:#fffdf7;border:1px solid #dde4dc;border-radius:18px;margin:14px 0;padding:16px;box-shadow:0 8px 24px rgba(15,23,42,.06)}}h1{{margin:0 0 8px}}.sub{{color:#64748b;line-height:1.7}}table{{border-collapse:collapse;width:100%;font-size:13px}}th,td{{border-bottom:1px solid #e2e8d7;padding:8px;text-align:left}}th{{background:#eef1e6}}a{{color:#2563eb;font-weight:800}}
-</style></head><body>{cloud_bar_html()}<div class="wrap"><div class="card"><h1>{APP_NAME}</h1><div class="sub">這是雲端 Web 啟動頁。為避免 Render 512MB 記憶體爆掉，開頁預設不自動重跑；需要更新時按「手動更新正式」。按「跑 DEMO」只產生測試 dashboard，不寫入正式持倉。</div></div><div class="card"><h2>目前檔案</h2><table><thead><tr><th>資料夾</th><th>檔案</th><th>大小</th><th>更新時間</th></tr></thead><tbody>{rows}</tbody></table></div></div>{cloud_script()}</body></html>"""
+</style></head><body>{cloud_bar_html()}<div class="wrap"><div class="card"><h1>{APP_NAME}</h1><div class="sub">這是雲端 Web 啟動頁。為避免 Render 512MB 記憶體爆掉，開頁預設不自動重跑；禮拜五早上可按「一鍵更新股池+正式推薦」：它會先更新台美股股池，再跑正式推薦。平常只想重跑推薦，就按「只跑正式推薦」。按「跑 DEMO」只產生測試 dashboard，不寫入正式持倉。</div></div><div class="card"><h2>目前檔案</h2><table><thead><tr><th>資料夾</th><th>檔案</th><th>大小</th><th>更新時間</th></tr></thead><tbody>{rows}</tbody></table></div></div>{cloud_script()}</body></html>"""
 
 
 @app.route("/")
@@ -458,6 +560,27 @@ def api_run():
     return jsonify(data)
 
 
+
+
+@app.route("/update_all", methods=["GET", "POST"])
+def update_all_page():
+    if not check_token():
+        abort(403)
+    start_update_all_then_run()
+    return redirect(url_for("index"))
+
+
+@app.route("/api/update_all", methods=["GET", "POST"])
+def api_update_all():
+    if not check_token():
+        return jsonify({"status": "forbidden", "message": "需要正確的 V1046_RUN_TOKEN / RUN_TOKEN"}), 403
+    started, data = start_update_all_then_run()
+    data["started"] = started
+    data["action"] = "update_tw_us_universe_then_real_run"
+    if not started:
+        data["message"] = "已有任務執行中，沒有重複啟動"
+    return jsonify(data)
+
 @app.route("/api/status")
 def api_status():
     return jsonify(_job_snapshot())
@@ -471,6 +594,14 @@ def api_sheets_status():
     return jsonify(get_sheets_status(light=not check))
 
 
+@app.route("/api/drive/status")
+def api_drive_status():
+    if get_drive_status is None:
+        return jsonify({"enabled": False, "configured": False, "error": "v1046_gs_sync import failed"})
+    check = request.args.get("check", "0").strip().lower() in {"1", "true", "yes"}
+    return jsonify(get_drive_status(light=not check))
+
+
 @app.route("/sheets")
 def sheets_page():
     status = get_sheets_status(light=True) if get_sheets_status is not None else {"enabled": False, "configured": False, "error": "v1046_gs_sync import failed"}
@@ -482,7 +613,7 @@ def sheets_page():
         if k not in {"sheet_url"}
     )
     sheet_link = f"<a href='{url}' target='_blank' rel='noopener'>打開 Google Sheet</a>" if url else "尚未設定 V1046_GOOGLE_SHEET_ID"
-    share_hint = f"把這個 service account 加到 Google Sheet 共用名單：<b>{sa}</b>，權限選 Editor。" if sa else "尚未讀到 service account email，請確認 V1046_GOOGLE_SERVICE_ACCOUNT_JSON。"
+    share_hint = f"把這個 service account 加到 Google Sheet 共用名單：<b>{sa}</b>，權限選 Editor。" if sa else "尚未讀到 service account email，請確認 GOOGLE_SERVICE_ACCOUNT_JSON_B64。"
     html = f"""<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{APP_NAME}｜Google Sheets</title>{cloud_css()}<style>
 body{{margin:0;background:#eef2f6;color:#243447;font-family:'Microsoft JhengHei',Arial,sans-serif}}.wrap{{max-width:1080px;margin:0 auto;padding:18px}}.card{{background:#fffdf7;border:1px solid #dde4dc;border-radius:18px;margin:14px 0;padding:16px;box-shadow:0 8px 24px rgba(15,23,42,.06)}}table{{border-collapse:collapse;width:100%;font-size:13px}}th,td{{border-bottom:1px solid #e2e8d7;padding:8px;text-align:left;vertical-align:top}}th{{background:#eef1e6;width:240px}}a{{color:#2563eb;font-weight:800}}code{{background:#e2e8f0;border-radius:8px;padding:2px 6px}}.ok{{color:#15803d;font-weight:900}}.warn{{color:#b45309;font-weight:900}}
 </style></head><body>{cloud_bar_html()}<div class="wrap"><div class="card"><h1>Google Sheets 同步狀態</h1><p>{sheet_link}</p><p>{share_hint}</p><table>{rows}</table><p><a href="{url_for('api_sheets_status')}?check=1">連線測試 /api/sheets/status?check=1</a></p></div><div class="card"><h2>同步內容</h2><p><b>state</b>：positions、closed_trades、equity_curve、signal_ledger。這是紙上交易帳本，開頁更新前會先從 Sheets 抓，跑完再回存。</p><p><b>output</b>：今日推薦、風控、監控摘要、FILTER/NO_REC 相關表格。dashboard HTML 不塞進 Sheets，仍由 Render 產生。</p><p><b>run_lock</b>：避免兩個瀏覽器同時打開造成互相覆蓋。</p></div></div>{cloud_script()}</body></html>"""
@@ -568,9 +699,15 @@ def build_full_health_payload() -> Dict[str, object]:
     sheets = {}
     if get_sheets_status is not None:
         try:
-            sheets = get_sheets_status(light=True)
+            sheets = get_sheets_status(light=False)
         except Exception as exc:
             sheets = {"enabled": False, "error": f"{type(exc).__name__}: {exc}"}
+    drive = {}
+    if get_drive_status is not None:
+        try:
+            drive = get_drive_status(light=False)
+        except Exception as exc:
+            drive = {"enabled": False, "error": f"{type(exc).__name__}: {exc}"}
     files = {
         "dashboard": str(DASHBOARD.relative_to(ROOT)) if DASHBOARD.exists() else "",
         "health_report": str(HEALTH_REPORT.relative_to(ROOT)) if HEALTH_REPORT.exists() else "",
@@ -598,6 +735,7 @@ def build_full_health_payload() -> Dict[str, object]:
         "settings": settings,
         "job": status,
         "google_sheets": sheets,
+        "google_drive": drive,
         "files": files,
     }
 
